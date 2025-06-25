@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::model::{
     ColourChannels, Colourspace, DecodeError,
     DecodeError::{GenericError, InvalidHeader},
@@ -26,15 +24,13 @@ const RUN_TAG: u8 = 0b11000000;
 pub fn decode(data: &[u8]) -> Result<Vec<u8>, DecodeError> {
     let header = extract_header(data)?;
     let mut data = data[HEADER_LENGTH..data.len() - 8].into_iter();
-    let mut seen: HashMap<usize, Pixel> = HashMap::new();
-    // let mut seen: [Option<Pixel>; 64] = [None; 64];
+    let mut seen: [Option<Pixel>; 64] = [None; 64];
     let mut previous_pixel = Pixel {
         alpha: 255,
         ..Default::default()
     };
-    // let mut output_buf: Vec<Pixel> =
-    //     Vec::with_capacity((header.height * header.width) as usize);
-    let mut output_buf: Vec<Pixel> = Vec::new();
+    let mut output_buf: Vec<Pixel> =
+        Vec::with_capacity((header.height * header.width) as usize);
 
     while let Some(value) = data.next() {
         match value {
@@ -45,9 +41,7 @@ pub fn decode(data: &[u8]) -> Result<Vec<u8>, DecodeError> {
                     blue: *data.next().unwrap(),
                     alpha: previous_pixel.alpha,
                 };
-                // println!("RGB {:?}", pixel);
-                // seen[pixel.index_position()] = Some(pixel);
-                upsert(&mut seen, pixel);
+                seen[pixel.index_position()] = Some(pixel);
                 previous_pixel = pixel;
                 output_buf.push(pixel);
             }
@@ -58,87 +52,61 @@ pub fn decode(data: &[u8]) -> Result<Vec<u8>, DecodeError> {
                     blue: *data.next().unwrap(),
                     alpha: *data.next().unwrap(),
                 };
-                // println!("RGBA {:?}", pixel);
-                // seen[pixel.index_position()] = Some(pixel);
-                upsert(&mut seen, pixel);
+                seen[pixel.index_position()] = Some(pixel);
                 previous_pixel = pixel;
                 output_buf.push(pixel);
             }
-            x if (x & COMPRESSION_TAG_MASK) == RUN_TAG => {
-                let count = (x & REMAINING_DATA_MASK) + 1;
-                // println!("{x:#b}, run tag {count}");
-                for _ in 0..count {
-                    output_buf.push(previous_pixel);
-                }
-            }
-            x if (x & COMPRESSION_TAG_MASK) == DIFF_TAG => {
-                // println!("diff tag {:#b}", x & REMAINING_DATA_MASK);
-
-                let dr = ((x & 0b00110000) >> 4) as i8 - 2;
-                let dg = ((x & 0b00001100) >> 2) as i8 - 2;
-                let db = (x & 0b00000011) as i8 - 2;
-                // println!("{dr}:{dg}:{db}");
-
-                let pixel = Pixel::from_diffs(&previous_pixel, dr, dg, db);
-                // println!("RGBA {:?}", pixel);
-                // seen[pixel.index_position()] = Some(pixel);
-                upsert(&mut seen, pixel);
-                previous_pixel = pixel;
-                output_buf.push(pixel);
-            }
-            x if (x & COMPRESSION_TAG_MASK) == LUMA_TAG => {
-                // println!("luma tag {}", x & REMAINING_DATA_MASK);
-                let next_byte = data
-                    .next()
-                    .expect("There should be another byte after the luma tag");
-
-                // int b2 = bytes[p++];
-                // int vg = (b1 & 0x3f) - 32;
-                // px.rgba.r += vg - 8 + ((b2 >> 4) & 0x0f);
-                // px.rgba.g += vg;
-                // px.rgba.b += vg - 8 +  (b2       & 0x0f);
-
-                let dg = (x & REMAINING_DATA_MASK) as i8 - 32;
-
-                let dr = dg - 8 + ((next_byte & 0b11110000) >> 4) as i8;
-                let db = dg - 8 + (next_byte & 0b00001111) as i8;
-
-                // println!("{dr}:{dg}:{db}");
-
-                let pixel = Pixel::from_diffs(&previous_pixel, dr, dg, db);
-                // println!("RGBA {:?}", pixel);
-                // seen[pixel.index_position()] = Some(pixel);
-                upsert(&mut seen, pixel);
-                previous_pixel = pixel;
-                output_buf.push(pixel);
-            }
-            x if (x & COMPRESSION_TAG_MASK) == INDEX_TAG => {
-                let idx = (x & REMAINING_DATA_MASK) as usize;
-                // println!("{x:#b}, index tag {idx}");
-                match seen.get(&idx) {
-                    Some(pixel) => {
-                        // println!("at index {idx} {pixel:?}");
-                        previous_pixel = *pixel;
-                        output_buf.push(*pixel)
-                    }
-                    None => {
-                        // println!("at index {idx} default");
-                        let pixel = Pixel::default();
-                        // seen[pixel.index_position()] = Some(pixel);
-                        upsert(&mut seen, pixel);
-                        previous_pixel = pixel;
-                        output_buf.push(pixel);
+            x => match x & COMPRESSION_TAG_MASK {
+                x if x == RUN_TAG => {
+                    let count = (x & REMAINING_DATA_MASK) + 1;
+                    for _ in 0..count {
+                        output_buf.push(previous_pixel);
                     }
                 }
+                x if x == DIFF_TAG => {
+                    let dr = ((x & 0b00110000) >> 4) as i8 - 2;
+                    let dg = ((x & 0b00001100) >> 2) as i8 - 2;
+                    let db = (x & 0b00000011) as i8 - 2;
+
+                    let pixel = Pixel::from_diffs(&previous_pixel, dr, dg, db);
+                    seen[pixel.index_position()] = Some(pixel);
+                    previous_pixel = pixel;
+                    output_buf.push(pixel);
+                }
+                x if x == LUMA_TAG => {
+                    let next_byte = data
+                        .next()
+                        .expect("There should be another byte after the luma tag");
+
+                    let dg = (x & REMAINING_DATA_MASK) as i8 - 32;
+                    let dr = dg - 8 + ((next_byte & 0b11110000) >> 4) as i8;
+                    let db = dg - 8 + (next_byte & 0b00001111) as i8;
+
+                    let pixel = Pixel::from_diffs(&previous_pixel, dr, dg, db);
+                    seen[pixel.index_position()] = Some(pixel);
+                    previous_pixel = pixel;
+                    output_buf.push(pixel);
+                }
+                x if x == INDEX_TAG => {
+                    let idx = (x & REMAINING_DATA_MASK) as usize;
+                    match seen.get(idx) {
+                        Some(Some(pixel)) => {
+                            previous_pixel = *pixel;
+                            output_buf.push(*pixel)
+                        }
+                        Some(None) => {
+                            let pixel = Pixel::default();
+                            seen[pixel.index_position()] = Some(pixel);
+                            previous_pixel = pixel;
+                            output_buf.push(pixel);
+                        }
+                        None => unreachable!()
+                    }
+                }
+                _ => unreachable!()
             }
-            x => panic!("Non supported tag {x}"),
         }
     }
-
-    // println!("{header:?}");
-    // println!("output data length: {}", output_buf.len());
-    // println!("{seen:?}");
-    // println!("{previous_pixel:?}");
 
     Ok(output_buf.to_raw())
 }
@@ -192,16 +160,6 @@ fn extract_header(data: &[u8]) -> Result<QoiHeader, DecodeError> {
     })
 }
 
-fn upsert(hm: &mut HashMap<usize, Pixel>, pixel: Pixel) {
-    let idx = pixel.index_position();
-    match hm.get_mut(&idx) {
-        Some(px) => *px = pixel,
-        None => {
-            hm.insert(idx, pixel);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{fs, fs::File, io::BufWriter, path::Path};
@@ -233,7 +191,7 @@ mod tests {
         let path = output_dir
             .join(name)
             .with_extension("png");
-        
+
         let file = File::create(path).unwrap();
         let writer = BufWriter::new(file);
 

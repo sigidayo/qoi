@@ -14,10 +14,15 @@ complexity = "deny"
 perf = "deny"
 suspicious = "deny"
 
+[[bench]]
+name = "decode"
+harness = false
+
 [dependencies]
 thiserror = "2.0.12"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
+criterion = { version = "0.6.0", features = ["html_reports"] }
 paste = "1.0.15"
 png = "0.18.0-rc.2"
