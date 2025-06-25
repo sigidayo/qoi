@@ -15,8 +15,8 @@ const HEADER_LENGTH: usize = 14;
 const MAGIC_BYTES: [u8; 4] = [0x71, 0x6F, 0x69, 0x66]; // "qoif"
 const ENDING_MAGIC_BYTES: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
 
-const RGB_TAG: u8 = 0b11111110;
-const RGBA_TAG: u8 = 0b11111111;
+const RGB_BYTE: u8 = 0b11111110;
+const RGBA_BYTE: u8 = 0b11111111;
 
 const COMPRESSION_TAG_MASK: u8 = 0b11000000;
 const REMAINING_DATA_MASK: u8 = 0b00111111;
@@ -37,7 +37,7 @@ pub fn decode(data: &[u8]) -> Result<Vec<u8>, DecodeError> {
 
     while let Some(value) = data.next() {
         match value {
-            x if x == &RGB_TAG => {
+            byte if byte == &RGB_BYTE => {
                 let pixel = Pixel {
                     red: *data.next().ok_or(MissingByte)?,
                     green: *data.next().ok_or(MissingByte)?,
@@ -48,7 +48,7 @@ pub fn decode(data: &[u8]) -> Result<Vec<u8>, DecodeError> {
                 previous_pixel = pixel;
                 output_buf.push(pixel);
             }
-            x if x == &RGBA_TAG => {
+            byte if byte == &RGBA_BYTE => {
                 let pixel = Pixel {
                     red: *data.next().ok_or(MissingByte)?,
                     green: *data.next().ok_or(MissingByte)?,
@@ -59,29 +59,29 @@ pub fn decode(data: &[u8]) -> Result<Vec<u8>, DecodeError> {
                 previous_pixel = pixel;
                 output_buf.push(pixel);
             }
-            x => match x & COMPRESSION_TAG_MASK {
-                x if x == RUN_TAG => {
-                    let count = (x & REMAINING_DATA_MASK) + 1;
+            byte => match byte & COMPRESSION_TAG_MASK {
+                tag if tag == RUN_TAG => {
+                    let count = (byte & REMAINING_DATA_MASK) + 1;
                     for _ in 0..count {
                         output_buf.push(previous_pixel);
                     }
                 }
-                x if x == DIFF_TAG => {
-                    let dr = ((x & 0b00110000) >> 4) as i8 - 2;
-                    let dg = ((x & 0b00001100) >> 2) as i8 - 2;
-                    let db = (x & 0b00000011) as i8 - 2;
+                tag if tag == DIFF_TAG => {
+                    let dr = ((byte & 0b00110000) >> 4) as i8 - 2;
+                    let dg = ((byte & 0b00001100) >> 2) as i8 - 2;
+                    let db = (byte & 0b00000011) as i8 - 2;
 
                     let pixel = Pixel::from_diffs(&previous_pixel, dr, dg, db);
                     seen[pixel.index_position()] = Some(pixel);
                     previous_pixel = pixel;
                     output_buf.push(pixel);
                 }
-                x if x == LUMA_TAG => {
+                tag if tag == LUMA_TAG => {
                     let next_byte = data
                         .next()
                         .expect("There should be another byte after the luma tag");
 
-                    let dg = (x & REMAINING_DATA_MASK) as i8 - 32;
+                    let dg = (byte & REMAINING_DATA_MASK) as i8 - 32;
                     let dr = dg - 8 + ((next_byte & 0b11110000) >> 4) as i8;
                     let db = dg - 8 + (next_byte & 0b00001111) as i8;
 
@@ -90,20 +90,19 @@ pub fn decode(data: &[u8]) -> Result<Vec<u8>, DecodeError> {
                     previous_pixel = pixel;
                     output_buf.push(pixel);
                 }
-                x if x == INDEX_TAG => {
-                    let idx = (x & REMAINING_DATA_MASK) as usize;
-                    match seen.get(idx) {
-                        Some(Some(pixel)) => {
-                            previous_pixel = *pixel;
-                            output_buf.push(*pixel)
+                tag if tag == INDEX_TAG => {
+                    let idx = (byte & REMAINING_DATA_MASK) as usize;
+                    match seen[idx] {
+                        Some(pixel) => {
+                            previous_pixel = pixel;
+                            output_buf.push(pixel)
                         }
-                        Some(None) => {
+                        None => {
                             let pixel = Pixel::default();
                             seen[pixel.index_position()] = Some(pixel);
                             previous_pixel = pixel;
                             output_buf.push(pixel);
                         }
-                        None => unreachable!(),
                     }
                 }
                 _ => unreachable!(),
@@ -173,7 +172,7 @@ mod tests {
                 fn [<$name _decode>]() {
                     let data = include_bytes!(concat!("../data/", $name, ".qoi"));
                     let decoded = decode(data).unwrap();
-                    assert_eq!(decoded.len() / 4, $width * $height);
+                    assert_eq!($width * $height, decoded.len() / 4);
                     save($name, &decoded, $width, $height);
                 }
             }
