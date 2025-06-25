@@ -1,3 +1,4 @@
+use std::array::TryFromSliceError;
 use thiserror::Error;
 
 use crate::model::sealed::Sealed;
@@ -15,12 +16,24 @@ pub trait RawToColours: Sealed {
 
 #[derive(Debug, Error)]
 pub enum DecodeError {
-    #[error("invalid header (expected {expected:?}, found {found:?})")]
-    InvalidHeader { expected: String, found: String },
     #[error("{0}")]
-    GenericError(#[from] Box<dyn std::error::Error>),
+    InvalidHeader(#[from] HeaderError),
+    #[error("the next byte that is expected due to the encoding tag is missing")]
+    MissingByte
+}
+#[derive(Debug, Error)]
+pub enum HeaderError {
     #[error("{0}")]
-    IoError(#[from] std::io::Error),
+    MalformedInput(#[from] TryFromSliceError),
+
+    #[error("invalid magic bytes (expected {expected:?}, found {found:?})")]
+    InvalidMagicBytes { expected: &'static str, found: String },
+
+    #[error("invalid colour channels (expected {expected:?}, found {found:?})")]
+    InvalidColourChannels { expected: &'static str, found: String },
+
+    #[error("invalid colour space (expected {expected:?}, found {found:?})")]
+    InvalidColourSpace { expected: &'static str, found: String },
 }
 
 #[derive(Debug)]
@@ -33,13 +46,13 @@ pub struct QoiHeader {
 
 #[derive(Debug)]
 pub enum ColourChannels {
-    RGB,
-    RGBA,
+    Rgb,
+    Rgba,
 }
 
 #[derive(Debug)]
 pub enum Colourspace {
-    SRGB,
+    SRgb,
     Linear,
 }
 

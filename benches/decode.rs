@@ -1,7 +1,7 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use qoi::decode;
+use qoi::decode::decode;
 
 macro_rules! bench {
     ($c:expr, $case:expr) => {
