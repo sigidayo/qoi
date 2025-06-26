@@ -6,10 +6,9 @@ use crate::{
         HeaderError::{
             InvalidColourChannels, InvalidColourSpace, InvalidMagicBytes, MalformedInput,
         },
-        Pixel, QoiHeader,
+        Pixel, PushUnchecked, QoiHeader,
     },
 };
-use crate::model::DecodeError::MissingByte;
 
 const HEADER_LENGTH: usize = 14;
 const MAGIC_BYTES: [u8; 4] = [0x71, 0x6F, 0x69, 0x66]; // "qoif"
@@ -25,45 +24,78 @@ const DIFF_TAG: u8 = 0b01000000;
 const LUMA_TAG: u8 = 0b10000000;
 const RUN_TAG: u8 = 0b11000000;
 
+#[derive(Debug)]
+struct SeenPixels {
+    inner: [Pixel; 64],
+}
+
+impl SeenPixels {
+    fn new() -> Self {
+        // Precomputed index of 53 for 0,0,0,255 https://github.com/phoboslab/qoi/issues/258 for why we do this
+        let mut inner = [Pixel::default(); 64];
+        inner[52] = Pixel {
+            alpha: 255,
+            ..Default::default()
+        };
+        Self { inner }
+    }
+
+    fn get(&self, idx: usize) -> Pixel {
+        self.inner[idx]
+    }
+
+    fn insert(&mut self, pixel: Pixel) {
+        self.inner[pixel.index_position()] = pixel;
+    }
+}
+
 pub fn decode(data: &[u8]) -> Result<Vec<u8>, DecodeError> {
     let header = extract_header(data)?;
-    let mut data = data[HEADER_LENGTH..data.len() - 8].iter();
-    let mut seen: [Option<Pixel>; 64] = [None; 64];
+    let data = &data[HEADER_LENGTH..data.len() - 8];
+    let mut seen = SeenPixels::new();
     let mut previous_pixel = Pixel {
         alpha: 255,
         ..Default::default()
     };
-    let mut output_buf: Vec<Pixel> = Vec::with_capacity((header.height * header.width) as usize);
 
-    while let Some(value) = data.next() {
-        match value {
-            byte if byte == &RGB_BYTE => {
+    let mut output_buf: Vec<Pixel> = Vec::new();
+    output_buf.reserve_exact((header.height * header.width) as usize);
+
+    let mut cursor = 0;
+    while cursor < data.len() {
+        let current_byte = data[cursor];
+        cursor += 1;
+
+        match current_byte {
+            byte if byte == RGB_BYTE => {
                 let pixel = Pixel {
-                    red: *data.next().ok_or(MissingByte)?,
-                    green: *data.next().ok_or(MissingByte)?,
-                    blue: *data.next().ok_or(MissingByte)?,
+                    red: data[cursor],
+                    green: data[cursor + 1],
+                    blue: data[cursor + 2],
                     alpha: previous_pixel.alpha,
                 };
-                seen[pixel.index_position()] = Some(pixel);
+                cursor += 3;
+                seen.insert(pixel);
                 previous_pixel = pixel;
-                output_buf.push(pixel);
+                unsafe { output_buf.push_unchecked(pixel) }
             }
-            byte if byte == &RGBA_BYTE => {
+            byte if byte == RGBA_BYTE => {
                 let pixel = Pixel {
-                    red: *data.next().ok_or(MissingByte)?,
-                    green: *data.next().ok_or(MissingByte)?,
-                    blue: *data.next().ok_or(MissingByte)?,
-                    alpha: *data.next().ok_or(MissingByte)?,
+                    red: data[cursor],
+                    green: data[cursor + 1],
+                    blue: data[cursor + 2],
+                    alpha: data[cursor + 3],
                 };
-                seen[pixel.index_position()] = Some(pixel);
+                cursor += 4;
+                seen.insert(pixel);
                 previous_pixel = pixel;
-                output_buf.push(pixel);
+                unsafe { output_buf.push_unchecked(pixel) }
             }
             byte => match byte & COMPRESSION_TAG_MASK {
                 tag if tag == RUN_TAG => {
                     let count = (byte & REMAINING_DATA_MASK) + 1;
                     for _ in 0..count {
-                        output_buf.push(previous_pixel);
+                        unsafe { output_buf.push_unchecked(previous_pixel) }
                     }
                 }
                 tag if tag == DIFF_TAG => {
@@ -72,38 +104,28 @@ pub fn decode(data: &[u8]) -> Result<Vec<u8>, DecodeError> {
                     let db = (byte & 0b00000011) as i8 - 2;
 
                     let pixel = Pixel::from_diffs(&previous_pixel, dr, dg, db);
-                    seen[pixel.index_position()] = Some(pixel);
+                    seen.insert(pixel);
                     previous_pixel = pixel;
-                    output_buf.push(pixel);
+                    unsafe { output_buf.push_unchecked(pixel) }
                 }
                 tag if tag == LUMA_TAG => {
-                    let next_byte = data
-                        .next()
-                        .expect("There should be another byte after the luma tag");
+                    let next_byte = data[cursor];
+                    cursor += 1;
 
                     let dg = (byte & REMAINING_DATA_MASK) as i8 - 32;
                     let dr = dg - 8 + ((next_byte & 0b11110000) >> 4) as i8;
                     let db = dg - 8 + (next_byte & 0b00001111) as i8;
 
                     let pixel = Pixel::from_diffs(&previous_pixel, dr, dg, db);
-                    seen[pixel.index_position()] = Some(pixel);
+                    seen.insert(pixel);
                     previous_pixel = pixel;
-                    output_buf.push(pixel);
+                    unsafe { output_buf.push_unchecked(pixel) }
                 }
                 tag if tag == INDEX_TAG => {
                     let idx = (byte & REMAINING_DATA_MASK) as usize;
-                    match seen[idx] {
-                        Some(pixel) => {
-                            previous_pixel = pixel;
-                            output_buf.push(pixel)
-                        }
-                        None => {
-                            let pixel = Pixel::default();
-                            seen[pixel.index_position()] = Some(pixel);
-                            previous_pixel = pixel;
-                            output_buf.push(pixel);
-                        }
-                    }
+                    let pixel = seen.get(idx);
+                    previous_pixel = pixel;
+                    unsafe { output_buf.push_unchecked(pixel) }
                 }
                 _ => unreachable!(),
             },
@@ -196,6 +218,7 @@ mod tests {
         writer.write_image_data(data).unwrap();
     }
 
+    // decode!("custom", 16, 1);
     decode!("dice", 800, 600);
     decode!("edgecase", 256, 64);
     decode!("kodim10", 512, 768);

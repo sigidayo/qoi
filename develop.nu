@@ -1,7 +1,8 @@
 #!/usr/bin/env nu
 
 def main []  {
-  print "Run tests with:   cargo test"
-  print "Fuzz with:        cargo fuzz run colour_to_raw -j 4 -- -max_total_time=60"
+  print "Fuzz targets:"
+  print "cargo fuzz run colour_to_raw -- -max_total_time=60"
+  print "cargo fuzz run push_unchecked -- -max_total_time=60"
   nix develop -c $env.SHELL
 }

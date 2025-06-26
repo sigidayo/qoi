@@ -1,4 +1,6 @@
+use core::ptr;
 use std::array::TryFromSliceError;
+
 use thiserror::Error;
 
 use crate::model::sealed::Sealed;
@@ -14,12 +16,18 @@ pub trait RawToColours: Sealed {
     fn to_colours(self) -> Vec<Pixel>;
 }
 
+pub trait PushUnchecked<T>: Sealed {
+    /// Will push an item and not check if there is enough capacity
+    ///
+    /// # Safety
+    /// Caller must ensure the array has enough capacity to hold `T`.
+    unsafe fn push_unchecked(&mut self, value: T);
+}
+
 #[derive(Debug, Error)]
 pub enum DecodeError {
     #[error("{0}")]
     InvalidHeader(#[from] HeaderError),
-    #[error("the next byte that is expected due to the encoding tag is missing")]
-    MissingByte
 }
 #[derive(Debug, Error)]
 pub enum HeaderError {
@@ -27,13 +35,22 @@ pub enum HeaderError {
     MalformedInput(#[from] TryFromSliceError),
 
     #[error("invalid magic bytes (expected {expected:?}, found {found:?})")]
-    InvalidMagicBytes { expected: &'static str, found: String },
+    InvalidMagicBytes {
+        expected: &'static str,
+        found: String,
+    },
 
     #[error("invalid colour channels (expected {expected:?}, found {found:?})")]
-    InvalidColourChannels { expected: &'static str, found: String },
+    InvalidColourChannels {
+        expected: &'static str,
+        found: String,
+    },
 
     #[error("invalid colour space (expected {expected:?}, found {found:?})")]
-    InvalidColourSpace { expected: &'static str, found: String },
+    InvalidColourSpace {
+        expected: &'static str,
+        found: String,
+    },
 }
 
 #[derive(Debug)]
@@ -103,6 +120,16 @@ impl RawToColours for Vec<u8> {
     }
 }
 
+impl PushUnchecked<Pixel> for Vec<Pixel> {
+    #[inline]
+    unsafe fn push_unchecked(&mut self, value: Pixel) {
+        // debug_assert!(self.capacity() > self.len());
+        let end = self.as_mut_ptr().add(self.len());
+        ptr::write(end, value);
+        self.set_len(self.len() + 1);
+    }
+}
+
 impl Pixel {
     pub fn from_diffs(previous_pixel: &Self, dr: i8, dg: i8, db: i8) -> Self {
         Self {
@@ -113,6 +140,7 @@ impl Pixel {
         }
     }
 
+    // the only thing to be improved
     #[inline]
     pub fn index_position(&self) -> usize {
         ((self.red as u16 * 3
