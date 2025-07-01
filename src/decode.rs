@@ -1,13 +1,13 @@
 use crate::{
     ColoursToRaw,
-    model::{
-        ColourChannels, Colourspace, DecodeError,
+    error::{
+        DecodeError,
         DecodeError::InvalidHeader,
         HeaderError::{
             InvalidColourChannels, InvalidColourSpace, InvalidMagicBytes, MalformedInput,
         },
-        Pixel, PushUnchecked, QoiHeader,
     },
+    model::{ColourChannels, Colourspace, Pixel, PushUnchecked, QoiHeader},
 };
 
 const HEADER_LENGTH: usize = 14;

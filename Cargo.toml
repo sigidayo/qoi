@@ -14,12 +14,12 @@ complexity = "deny"
 perf = "deny"
 suspicious = "deny"
 
+[features]
+std = []
+
 [[bench]]
 name = "decode"
 harness = false
-
-[dependencies]
-thiserror = "2.0.12"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
