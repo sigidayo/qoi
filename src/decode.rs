@@ -1,5 +1,9 @@
 use crate::{
     ColoursToRaw,
+    constants::{
+        COMPRESSION_TAG_MASK, DIFF_TAG, ENDING_QOI_MAGIC_BYTES, HEADER_LENGTH, INDEX_TAG, LUMA_TAG,
+        QOI_MAGIC_BYTES, REMAINING_DATA_MASK, RGB_BYTE, RGBA_BYTE, RUN_TAG,
+    },
     error::{
         DecodeError,
         DecodeError::InvalidHeader,
@@ -7,47 +11,8 @@ use crate::{
             InvalidColourChannels, InvalidColourSpace, InvalidMagicBytes, MalformedInput,
         },
     },
-    model::{ColourChannels, Colourspace, Pixel, PushUnchecked, QoiHeader},
+    model::{ColourChannels, Colourspace, Pixel, PushUnchecked, QoiHeader, SeenPixels},
 };
-
-const HEADER_LENGTH: usize = 14;
-const MAGIC_BYTES: [u8; 4] = [0x71, 0x6F, 0x69, 0x66]; // "qoif"
-const ENDING_MAGIC_BYTES: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
-
-const RGB_BYTE: u8 = 0b11111110;
-const RGBA_BYTE: u8 = 0b11111111;
-
-const COMPRESSION_TAG_MASK: u8 = 0b11000000;
-const REMAINING_DATA_MASK: u8 = 0b00111111;
-const INDEX_TAG: u8 = 0b00000000;
-const DIFF_TAG: u8 = 0b01000000;
-const LUMA_TAG: u8 = 0b10000000;
-const RUN_TAG: u8 = 0b11000000;
-
-#[derive(Debug)]
-struct SeenPixels {
-    inner: [Pixel; 64],
-}
-
-impl SeenPixels {
-    fn new() -> Self {
-        // Precomputed index of 53 for 0,0,0,255 https://github.com/phoboslab/qoi/issues/258 for why we do this
-        let mut inner = [Pixel::default(); 64];
-        inner[52] = Pixel {
-            alpha: 255,
-            ..Default::default()
-        };
-        Self { inner }
-    }
-
-    fn get(&self, idx: usize) -> Pixel {
-        self.inner[idx]
-    }
-
-    fn insert(&mut self, pixel: Pixel) {
-        self.inner[pixel.index_position()] = pixel;
-    }
-}
 
 pub fn decode(data: &[u8]) -> Result<Vec<u8>, DecodeError> {
     let header = extract_header(data)?;
@@ -137,13 +102,13 @@ pub fn decode(data: &[u8]) -> Result<Vec<u8>, DecodeError> {
 
 fn extract_header(data: &[u8]) -> Result<QoiHeader, DecodeError> {
     let length = data.len();
-    if data[0..4] != MAGIC_BYTES {
+    if data[0..4] != QOI_MAGIC_BYTES {
         return Err(InvalidHeader(InvalidMagicBytes {
             expected: "[0x71, 0x6F, 0x69, 0x66]",
             found: format!("{:?}", &data[0..4]),
         }));
     }
-    if data[length - 8..length] != ENDING_MAGIC_BYTES {
+    if data[length - 8..length] != ENDING_QOI_MAGIC_BYTES {
         return Err(InvalidHeader(InvalidMagicBytes {
             expected: "[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]",
             found: format!("{:?}", &data[length - 8..length]),

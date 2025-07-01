@@ -49,6 +49,12 @@ pub struct Pixel {
     pub alpha: u8,
 }
 
+#[derive(Debug)]
+pub struct SeenPixels {
+    inner: [Pixel; 64],
+}
+
+
 impl Sealed for Vec<u8> {}
 impl Sealed for Vec<Pixel> {}
 
@@ -115,5 +121,27 @@ impl Pixel {
             + self.blue as u16 * 7
             + self.alpha as u16 * 11)
             % 64) as usize
+    }
+}
+
+impl SeenPixels {
+    pub fn new() -> Self {
+        // Precomputed index of 53 for 0,0,0,255 https://github.com/phoboslab/qoi/issues/258 for why we do this
+        let mut inner = [Pixel::default(); 64];
+        inner[52] = Pixel {
+            alpha: 255,
+            ..Default::default()
+        };
+        Self { inner }
+    }
+
+    pub fn get(&self, idx: usize) -> Pixel {
+        self.inner[idx]
+    }
+
+    pub fn insert(&mut self, pixel: Pixel) -> usize {
+        let idx = pixel.index_position();
+        self.inner[idx] = pixel;
+        idx
     }
 }
